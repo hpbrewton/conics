@@ -35,6 +35,7 @@ class Machine:
         self.t = BitVec("target", self.state_width)
         self.o = BitVec("output", self.output_width)
         self.r = []
+        self.guards = []
         self.edges = []
 
     def connect(self, pre : TimeSlice, post : TimeSlice):
@@ -52,12 +53,14 @@ class Machine:
 
     def add_edge(self, frm, guard, delta, target):
         hypo = And(self.f == frm, guard)
+        self.guards.append(hypo)
         result = And(self.t == target, delta)
         edge = Implies(hypo, result)
         self.edges.append(edge)
 
     def logic(self):
-        return And(*self.edges) 
+        notOther = Not(And(*self.guards))
+        return And(notOther, *self.edges) 
 
     def clear(self):
         self.edges = []
@@ -103,8 +106,8 @@ c = BitVec("c", 2)
 m = Machine(1, 2, 2)
 v = m.add_register("v", 2)
 for r in synthesize(2, [v.i, c]):
-    m.add_edge(0, v.i == 1, And(v.o == r, m.o == 0), 0)
-    m.add_edge(0, v.i == 0, And(v.o == r, m.o == 1), 0)
+    m.add_edge(0, v.i != 3, And(v.o == r, m.o == 0), 0)
+    m.add_edge(0, v.i == 3, And(v.o == r, m.o == 1), 0)
     f = m.example([0, 0, 0, 0], [0, 0, 1, 0])
     s = Solver()
     s.add(f)
