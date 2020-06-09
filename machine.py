@@ -37,6 +37,7 @@ class Machine:
         self.r = []
         self.guards = []
         self.edges = []
+        self.examples = []
 
     def connect(self, pre : TimeSlice, post : TimeSlice):
         # first create connections between registers
@@ -44,7 +45,7 @@ class Machine:
         reg_curr_cnxn = And(*[And(curr.o == m.o, curr.i == m.i) for curr, m in zip(pre.r, self.r)])
         in_reg = [r.i for r in self.r]
         out_reg = [r.o for r in self.r]
-        return Exists([self.i, self.f, self.t, self.o, *in_reg, *out_reg], And(self.logic(), self.i == pre.i, self.f == pre.s, self.t == post.s, self.o == pre.o, reg_curr_cnxn, reg_next_cnxn))
+        return Exists([self.i, self.f, self.t, self.o, *in_reg, *out_reg], And(self.machine_logic(), self.i == pre.i, self.f == pre.s, self.t == post.s, self.o == pre.o, reg_curr_cnxn, reg_next_cnxn))
 
     def add_register(self, name, width):
         register = Register(name, width)
@@ -58,17 +59,20 @@ class Machine:
         edge = Implies(hypo, result)
         self.edges.append(edge)
 
-    def logic(self):
-        notOther = Not(And(*self.guards))
-        return And(notOther, *self.edges) 
-
-    def clear(self):
-        self.edges = []
+    def add_example(self, inp, out):
+        self.examples.append((inp, out))
 
     def duplicate_registers(self, prefix):
         return [r.duplicate(prefix) for r in self.r]
 
-    def example(self, inp, out):
+    def clear(self):
+        self.edges = []
+
+    def machine_logic(self):
+        notOther = Not(And(*self.guards))
+        return And(notOther, *self.edges) 
+
+    def example_logic(self, inp, out):
         if len(inp) != len(out): return None
         length = len(inp)
         slices = [TimeSlice(t, self.state_width, self.input_width, self.output_width, self.duplicate_registers(str(t))) for t in range(length)]
@@ -77,6 +81,9 @@ class Machine:
         start = slices[0].s == 0
         reg = slices[0].r[0].i == 1
         return And(And(*comms), And(*cnxns), start, reg) 
+
+    def formula(self):
+        return And(*[self.example_logic(inp, out) for inp, out in self.examples])
 
 def synthesize(depth, base):
     items = [base]
@@ -105,11 +112,12 @@ we synthesise through a simple grammar of linear arithmetic:
 c = BitVec("c", 2)
 m = Machine(1, 2, 2)
 v = m.add_register("v", 2)
+m.add_example([0, 0, 0, 0], [0, 0, 1, 0])
 for r in synthesize(2, [v.i, c]):
     m.add_edge(0, v.i != 3, And(v.o == r, m.o == 0), 0)
     m.add_edge(0, v.i == 3, And(v.o == r, m.o == 1), 0)
-    f = m.example([0, 0, 0, 0], [0, 0, 1, 0])
     s = Solver()
+    f = m.formula()
     s.add(f)
     if unsat != s.check():
         print(r)
