@@ -1,0 +1,103 @@
+\documentclass{article}
+\usepackage{times}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+
+\newcommand{\width}{\text{width}}
+\newcommand{\from}{\leftarrow}
+\newcommand{\enc}{\sharp}
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[section]
+
+\begin{document}
+\section{How are transducers encoded?}
+\begin{definition}
+Let $(Q, q_0, V, B, E, S, T)$ be a stateful transducer. 
+$Q$ is a finite set of states, and $q_0$ is the initial state of the stateful transducer.
+$V$ is a finite set of registers, each a finite width bit string. 
+We can index $V$ as $V_1, V_2, \ldots, V_n$,
+and we say that $\width(V_i)$ is the width of register $V_i$.
+$B$ is a language of bit-operator arithmetic with the usual suspects: $\{+, *, <<, >>, -, \ldots \}$ as operators,
+and a base set of values a set of registers and set of bitstring integers,
+without being to careful, the language $B$ is defined such that operators can only be applied to operands with consistent bitwidths (I can make this better).
+We can select a subset $B_x$ of $B$, meaning the subset of expressions in $B$ that evaluate to values of $x$ width.
+$S$ is a finite set of input language characters.
+$T$ is a finite set of output language characters. 
+$E$ is a set of six tuples $(Q, S, B_1, 2^{(V \from B_{\width(v)})}, T, Q)$ representating transitions.
+The elements are repsectively:
+the start node of the edge,
+the accepting input character,
+an additional boolean guard,
+a set of asignment to the registers from boolean expressions such that widths checkout,
+the output character,
+and the target node of the edge.
+Note there is no final accepting set of nodes.
+\end{definition}
+
+The idea of the encoding is to describe the machines logic using a set of unbound variables,
+for the input, output, register start state, register end state, start node state, and end node states.
+Call these variables the timeless variables.
+These variables exclusively are used to describe the logic of the edges.
+Then we create a set of copies of variables for the input, output, register state, and node state
+for each of some finite $n$ number of steps.
+Call these variables the timeful variables.
+We then sow together the timeless variables and the timeful variables between each pair of time steps ($i$ and $i+1$).
+We do this by saying there exists timeless variables such that everything makes sense with the timeful variables
+(e.g. the input timeless variable is the input variable for time step $i$,
+and the register end state is the register state for time step $i+1$),
+and that the edge logic described using timeless variables is true.
+We then conjoin all these extestential statments together.
+
+\subsection{Basic Conversions}
+First we will dicuss the encoding of some constant values.
+$Q$, $S$, and $T$ are encoded by using some bijection between those sets and the natural numbers upto their magnitude.
+Let $\enc Q$, $\enc S$, and $\enc T$ be encodings for each set respectively.
+$\enc q_0$, the encoding of $\enc q_0$, is just $(\enc Q) (q_0)$.
+
+\subsection{Encoding Registers}
+We use two variables for some register $v_i$: $\enc (v_i)$ and $\enc (v_i)'$.
+The former being a variable representing input values and the latter output values.
+
+\subsection{Encoding bit-operator arithmetic}
+Bit-operator arithmetic has a very natural encoding by just mapping each operator to it's respect first order logic encoding.
+Any use of a register is simply encoded as $\enc (v_i)$, that is the input value.
+
+\subsection{Encoding assignment}
+For some assignment $v_i \from b$, we have $\enc (v_i \from b) := \enc (v_i)' = \enc (b)$.
+
+\subsection{Encoding edges}
+For some edge $(q, s, g, a, t, q')$,
+we have the encoding:
+$$\enc (q, s, g, a, t, q') := (m_s = \enc q \wedge m_i = \enc s) \implies (\enc g  \wedge \enc a \wedge m_o = \enc t \wedge m_t = \enc q')$$
+$m_s$, $m_i$, $m_o$, and $m_t$ are variables representing the start state, input character, output character, and target state respectively.
+They will be bound, as shown in the next section, as extential variables set equal to time time dependent states and characters.
+We then create an encoding of all edges by conjoining each of these implications together.
+We also add a special default annotation such that if $\neg (m_s = \enc q \wedge m_i = \enc s)$ for paired $q$ and $s$,
+the implication is false.
+
+\subsection{Encoding the machine}
+The machine's logic is encoded upto some fixed time $n$,
+meaning that the encoding will correctly execute the logic for $n$ input and output characters, with any extra output being undefined behavior.
+For each $0 \le i < n$, we create the following variables: a state variable $s$, an input variable $i$, an output variable $o$, a variable for each register $w_{1 \ldots n}$.
+We will refer to each of these set of variables as time slice.
+We then encode the transfer from time $i$ to $i+1$ as:
+\begin{align*}
+\exists m_s, m_i, m_o, m_t, v_1, v_2, \ldots, v_n, v_1', v_2', \ldots, v_n'. \\
+m_s = s_i \wedge \\ 
+m_i = i_i \wedge 
+m_o = o_i \wedge 
+m_t = s_{i+1} \wedge \\ 
+v_k = (w_k)_i \wedge
+v_k' = (w_k)_{i+1} \wedge 
+\text{encoding of all the edges as given in the previous}
+\end{align*}
+Also, we set $(w_k)_0$ to appropriate initial register values,
+and $s_i = \enc(q_0)$ that is to the start node.
+
+\subsection{Encoding examples}
+Finally, for each input/output example given we encode a machine up to 
+the length of the input output example,
+and then take the conjunction of each copy.
+
+\end{document}
