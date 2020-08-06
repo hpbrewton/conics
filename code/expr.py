@@ -1,183 +1,292 @@
 from z3 import *
+import lark
+import string
+from lark import Tree, Token
 
-def width(max):
-    if max <= 1: 
-        return 1
-    else:
-        return math.ceil(math.log2(max))
+parser = lark.Lark('''
+transducer: "transducer" CNAME [CNAME*] "{" [edge*] "}" "examples" "{" [example*] "}"
 
-class MachineSketch:
-    def __init__(self):
-        self.inputs = []
-        self.outputs = []
-        self.nextState = 0 
-        self.start_state = None
-        self.assignments = [] # Register * Pos * Edge
-        self.holes = [] # String * width
-        self.literals = [] # Int * width 
-        self.variables = [] # String * width 
-        self.registers = [] # String * width
-        self.ops = [] # Pos * Rep * Pos
-        self.positions = [] # K * Int
-        self.examples = [] # String^2
-        self.edges = [] # Int * I * Pos * O * Int
+edge: CNAME "/" CNAME "/" bexpr "/" assigns "/" CNAME "/" CNAME "/"
 
-    def add_state(self):
-        ret = self.nextState
-        self.nextState += 1 
-        return ret
+assigns: [assign*]
+assign: CNAME "=" aexpr ";"
 
-    def set_start_state(self, state):
-        self.start_state = state 
+bexpr: bexpr "||" bexpr -> or
+	| bexpr "&&" bexpr -> and
+	| "!" bexpr -> not
+	| aexpr ">=" aexpr -> gte
+	| aexpr ">" aexpr -> gt
+	| aexpr "<=" aexpr -> lte
+	| aexpr "<" aexpr -> lt
+	| aexpr "==" aexpr -> eq 
+	| aexpr "!=" aexpr -> neq
+	| "??" CNAME -> boolhole
 
-    def add_input(self, input):
-        self.inputs.append(input)
-        return len(self.inputs) - 1 
+aexpr: aexpr "+" aexpr -> add
+	| aexpr "*" aexpr -> mul
+	| "-" aexpr -> neg
+	| CNAME -> varb 
+	| "??" CNAME -> arithhole
+	| SIGNED_INT -> int
 
-    def add_output(self, output):
-        self.outputs.append(output)
-        return len(self.outputs) - 1
+register: CNAME
+variable: CNAME
 
-    def add_assignment(self, register, expr, edge):
-        self.assignments.append((register, expr, edge))
-        return len(self.assignments) - 1
+example: word "/" word ";"
+word: CNAME [("," CNAME)*] 
 
-    def add_hole(self, name, width):
-        self.holes.append((name, width))
-        return len(self.holes) - 1 
+%import common.CNAME
+%import common.SIGNED_INT
+%import common.WS
 
-    def add_literal(self, lit):
-        self.literals.append(lit)
-        return len(self.literals) - 1 
+%ignore WS
+''', start='transducer')
 
-    def add_literal_pos(self, lit):
-        idx = self.add_literal(lit)
-        return self.add_position("literal", idx)
+example = ''.join(sys.stdin.readlines())
+ 
+def tree_to_sexpr(source, tree):
+	if type(tree) == Tree:
+		return [tree.data] + [tree_to_sexpr(source, child) for child in tree.children]
+	elif type(tree) == Token:
+		return source[tree.pos_in_stream:tree.end_pos] 
 
-    def add_variable(self, name, width):
-        self.variables.append((name, width))
-        return len(self.variables) - 1
+il = lambda x: isinstance(x, list)
 
-    def add_register(self, name, width):
-        self.registers.append((name, width))
-        return len(self.registers) - 1
+def edges(tree):
+	return filter(lambda x: il(x) and x[0] == 'edge', tree)
 
-    def add_op(self, who, left, right):
-        self.ops.append((who, left, right))
-        return len(self.ops) - 1
+def states(tree):
+	return {v for edge in edges(tree) for v in (edge[1], edge[-1])}
 
-    def add_op_pos(self, who, left, right):
-        idx = self.add_op(who, left, right)
-        return self.add_position("operation", idx)
+def inputs(tree):
+	return {edge[2] for edge in edges(tree)}
 
-    def add_position(self, kind, idx):
-        self.positions.append((kind, idx))
-        return len(self.positions) - 1
+def outputs(tree):
+	return {edge[-2] for edge in edges(tree)}
 
-    def add_example(self, inp, out):
-        # assumes |inp| = |out|
-        self.examples.append((inp, out))
-        return len(self.examples) - 1 
+def registers(tree):
+	return {item for item in tree[2:] if not il(item)}
 
-    def add_edge(self, start, inp, guard, out, finish):
-        self.edges.append((start, inp, guard, out, finish))
-        return len(self.edges) - 1
+def findall(tree, what):
+	if not il(tree):
+		if tree == what:
+			return tree
+	if tree[0] == what:
+		yield tree
+	for child in tree[1:]:
+		for item in findall(child, what):
+			yield item
 
-    def get_machine_formula(self):
-        hole_formulas = [BitVec(*args) for args in self.holes]
-        literal_formulas = self.literals
-        variable_formulas = [BitVec(*args) for args in self.variables]
-        register_formulas = [BitVec(*args) for args in self.registers]
-        registerp_formulas = [BitVec(name+"'", width) for (name, width) in self.registers]
+def arithholes(tree):
+	return { x[1] for x in findall(tree, "arithhole")}
 
-        position_formulas = []
-        for (kind, idx) in self.positions:
-            if kind == "hole": position_formulas.append(hole_formulas[idx])
-            elif kind == "literal": position_formulas.append(literal_formulas[idx])
-            elif kind == "variable": position_formulas.append(variable_formulas[idx])
-            elif kind == "register": position_formulas.append(register_formulas[idx])
-            elif kind == "operation":
-                (who, left, right) = self.ops[idx]
-                left_f = position_formulas[left] if left != None else None 
-                right_f = position_formulas[right] if right != None else None
-                formula = None
-                if who == "+": formula = left_f + right_f
-                elif who == "*": formula = left_f * right_f
-                elif who == "-": formula = -left_f
-                elif who == "/\\": formula = And(left_f, right_f)
-                elif who == "\\/": formula = Or(left_f, right_f)
-                elif who == "==": formula = left_f  == right_f
-                elif who == "!=": formula = left_f != right_f
-                else: return None
-                position_formulas.append(formula)
-            else: return None 
+def boolholes(tree):
+	return { x[1] for x in findall(tree, "boolhole")}
 
-        deltas_list = [list() for _ in range(len(self.edges))]
-        for (reg, pos, edge) in self.assignments:
-            assignment = (registerp_formulas[reg] == position_formulas[pos])
-            deltas_list[edge].append(assignment)
-        deltas = [And(*p_edge) for p_edge in deltas_list]
+def variables(tree):
+	return { x[1] for x in findall(tree, "varb")}
 
-        start = BitVec("s", width(self.nextState-1))
-        inp = BitVec("i", width(len(self.inputs)))
-        out = BitVec("o", width(len(self.outputs)))
-        target = BitVec("t", width(self.nextState-1))
-        edge_formulas = [] 
-        for i, (c_start, c_inp, c_guard, c_out, c_target) in enumerate(self.edges):
-            hypo = And(c_start == start, c_inp == inp)
-            resu = And(c_out == out, c_target == target)
-            edge_formula = Implies(hypo, And(resu, deltas[i]))
-            edge_formulas.append(edge_formula)
+def varbs(items):
+	enumed = list(enumerate(items))
+	to_num = { num : str for (num, str) in enumed}
+	from_num = { str : num for (num, str) in enumed}
+	return (from_num, to_num)
 
-        example_formulas = []
-        for (input_ex, output_ex) in self.examples:
-            length = len(input_ex) #same as out length
-            states = [BitVec("s_{}".format(i), width(self.nextState-1)) for i in range(length)]
-            registers = [[BitVec("{}_{}".format(name, i), width) for (name, width) in self.registers] for i in range(length)]
-            
-            timestep_formulas = []
-            for i in range(length-1):
-                reg_formulas = []
-                for reg in range(len(self.registers)):
-                    reg_formula = And(
-                        register_formulas[reg] == registers[i][reg],
-                        registerp_formulas[reg] == registers[i+1][reg]
-                    )
-                    reg_formulas.append(reg_formula)
-                timestep_body = And(
-                    start == states[i],
-                    inp == input_ex[i],
-                    out == output_ex[i],
-                    target == states[i+1],
-                    And(*edge_formulas),
-                    And(*reg_formulas)
-                )
-                timestep = Exists([start, inp, out, target, *register_formulas, *registerp_formulas], timestep_body)
-                timestep_formulas.append(timestep)
+def bitvecs(names, prefix=""):
+	return {name : BitVec("{}{}".format(name, prefix), 8) for name in names}
 
-            example_formula = And(states[0] == self.start_state, *timestep_formulas)
-            example_formulas.append(example_formula)
+def expression(tree, reg_in, variables):
+	if type(tree) == str:
+		if tree.isnumeric():
+			return int(tree)
+	c = [expression(child, reg_in, variables) for child in tree[1:]]
+	if tree[0] == "eq": return (c[0] == c[1])
+	elif tree[0] == "neq": return (c[0] != c[1])
+	elif tree[0] == "lte": return (c[0] <= c[1])
+	elif tree[0] == "gt": return (c[0] > c[1])
+	elif tree[0] == "add": return (c[0] + c[1])
+	elif tree[0] == "mul": return (c[0] * c[1])
+	elif tree[0] == "varb": return c[0]
+	elif tree[0] in reg_in: return (reg_in[tree[0]])
+	elif tree[0] in variables: return (variables[tree[0]])
+	elif tree[0] == "int": return c[0]
+	else: 
+		raise Exception("{} not found".format(tree[0]))
 
-sketch = MachineSketch()
-"""
-    m.add_edge(0, v.i != 3, And(v.o == r, m.o == 0), 0)
-    m.add_edge(0, v.i == 3, And(v.o == r, m.o == 1), 0)
-"""
-s = sketch.add_state()
-sketch.set_start_state(s)
-i0 = sketch.add_input(0)
-o0 = sketch.add_output(0)
-o1 = sketch.add_output(1)
-v = sketch.add_register("v", 5)
-r = sketch.add_position("register", v)
-three = sketch.add_literal_pos(3)
-one = sketch.add_literal_pos(1)
-g1 = sketch.add_op_pos("!=", r, three)
-g2 = sketch.add_op_pos("==", r, three)
-d1 = sketch.add_op_pos("+", r, one)
-e1 = sketch.add_edge(s, i0, g1, o0, s)
-e2 = sketch.add_edge(s, i0, g2, o1, s)
-sketch.add_assignment(v, d1, e1)
-sketch.add_assignment(v, d1, e2)
-sketch.add_example([0, 0], [0, 0])
-sketch.get_machine_formula()
+def assignments(tree, reg_in, reg_out, variables):
+	exprs = []
+	for assignment in tree[1:]:
+		expr = reg_out[assignment[1]] == expression(assignment[2], reg_in, variables)
+		exprs.append(expr)
+	return And(*exprs) 
+
+def hypo_res(tree):
+	def ret(st, inp, out, fsh, states_m, inp_m, out_m, reg_in, reg_out, variables):
+		es = edges(tree)
+		guards = []
+		edgels = []
+		for e in es:
+			stl = st == states_m[e[1]]
+			inpl = inp_m[inp] == inp_m[e[2]]
+			guardl = expression(e[3], reg_in, variables)
+			hypol = And(stl, inpl, guardl)
+			guards.append(hypol)
+	
+			deltal = assignments(e[-3], reg_in, reg_out, variables)
+			outl = out_m[out] == out_m[e[-2]]
+			fshl = fsh == states_m[e[-1]]
+			resul = And(deltal, outl, fshl)
+			edgels.append(Implies(hypol, resul))
+		return (And(*edgels, Or(*guards)))
+	return ret
+
+def examples(tree):
+	return [elem[1:] for elem in tree if il(elem) and elem[0] == "example"]
+
+def formula(tree):
+	head_maker = hypo_res(tree)
+
+	states_tn, states_fn = varbs(states(tree))
+	inputs_tn, inputs_fn = varbs(inputs(tree))
+	outputs_tn, outputs_fn = varbs(outputs(tree))
+	vars = bitvecs(variables(tree))
+
+	formulae = []
+	for example in examples(tree):
+		input = example[0][1:]
+		output = example[1][1:]
+		length = len(input)
+		sts = [BitVec("s_{}".format(i), width(len(states(tree)))) for i in range(length+1)]
+		sts_starts = sts[0] == 0
+		regs = [bitvecs(registers(tree), "in_{}".format(i)) for i in range(length+1)]
+		reg_starts = And(*[regs[0][key] == 0 for key in regs[0]])
+	
+		formulae.append(And(sts_starts, reg_starts, *[head_maker(sts[i], input[i], output[i], sts[i+1], states_tn, inputs_tn, outputs_tn, regs[i], regs[i+1], vars) for i in range(length)]))
+
+	return And(*formulae)
+		
+
+def width(x):
+	return 1+math.ceil(math.log2(x))
+
+def scores(n, k):
+	s = [0 for _ in range(k)]
+	s[0] = n
+	t = True
+	while t:
+		v = [s[i-1] - s[i] for i in range(1, k)] 
+		total = sum(v)
+		v.append(n-total)
+		yield v
+		t = False
+		for i in range(k-1, 0, -1):
+			if s[i] < s[i-1]:
+				s[i] += 1	
+				t = True
+				for j in range(i+1, k):
+					s[j] = 0 
+				break
+
+def fixed_numbers(k):
+	i = 0
+	while True:
+		for v in scores(i, k):
+			yield v
+		i += 1
+
+def perm_generator(g, k):
+	l = []
+	i = 0
+	for v in g:
+		l.append(v)
+		for v in scores(i, k):
+			yield [l[j] for j in v]
+		i += 1
+
+def fills():
+	old = [["varb", "x"], ["varb", "r"]]
+	newer = old
+	newest = []
+	for v in newer:
+		yield v
+	while True:
+		for ni in newer:
+			for oi in old:	
+				a = ["add", ni, oi]
+				m = ["mul", ni, oi]
+				yield a
+				yield m
+				newest.append(a)
+				newest.append(m)
+		old.extend(newer)
+		newer = newest
+		newest = []
+
+def kfills(k):
+	return perm_generator(fills(), k)
+
+def substitute(v, tree):
+	if not il(tree):
+		return tree
+	elif tree[0] == "arithhole":
+		return v[tree[1]]
+	else:
+		return [substitute(v, part) for part in tree]
+
+def backsubstitute(regs, model, tree):
+	if not il(tree):
+		return tree
+	elif tree[0] == "varb" and tree[1] not in regs:
+		return model[tree[1]]
+	else:
+		return [backsubstitute(regs, model, part) for part in tree]
+
+def synthesize(tree):
+	arholes = arithholes(tree)
+	nholes = len(arholes)
+	for fill in kfills(nholes):
+		v = {k : v for k, v in zip(arholes, fill)}
+		tprime = substitute(v, tree)
+		f = formula(tprime)
+		s = Solver()
+		s.add(f)
+		if unsat != s.check():
+			raw_model = s.model()
+			print(f)
+			model = {k.name() : raw_model[k] for k in raw_model.decls()}
+			return backsubstitute(registers(tprime), model, tprime)
+
+def display_expr(e):
+	def op(f):
+		return display_expr(e[1]) + " " +  f + " " + display_expr(e[2])
+	if not il(e): return str(e)
+	if e[0] == "neq": return op("!=")
+	elif e[0] == "eq": return op("==")
+	elif e[0] == "add": return op("+")
+	elif e[0] == "mul": return op("*")
+	elif e[0] == "varb": return e[1] 
+	elif e[0] == "int": return e[1]
+	elif e[0] == "assign": return op("=")
+	elif e[0] == "lte": return op("<=")
+	elif e[0] == "gt": return op(">")
+	elif e[0] == "assigns":
+		return str(*[display_expr(assign) for assign in e[1:]]) + ";"
+ 
+def display_edges(e):
+	for edge in e:
+		g = display_expr(edge[3])
+		d = display_expr(edge[-3])
+		print("\t" + " / ".join([edge[1], edge[2], g, d, edge[-2], edge[-1]]) + " /")
+
+def display(tree):
+	for item in tree:
+		if item[0] == 'edge':
+			break
+		print(item, end = " ")
+	print("{")
+	display_edges(edges(tree))
+	print("}")
+
+out = parser.parse(example)
+tree = tree_to_sexpr(example, out)
+display(synthesize(tree))
