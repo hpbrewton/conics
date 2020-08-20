@@ -1,3 +1,7 @@
+import re
+
+register_str = re.compile("r\d*")
+
 il = lambda x: isinstance(x, list)
 
 def edges(tree):
@@ -13,7 +17,7 @@ def outputs(tree):
 	return {edge[-2] for edge in edges(tree)}
 
 def registers(tree):
-	return {item for item in tree[2:] if not il(item)}
+	return {var for var in variables(tree) if register_str.match(var)}
 
 def examples(tree):
 	return [elem[1:] for elem in tree if il(elem) and elem[0] == "example"]

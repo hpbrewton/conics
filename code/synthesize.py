@@ -49,18 +49,20 @@ a simple synthesizer which produces successively more complicated expressions (s
 does a k-dimensional diagonal traversal over these (intuition: https://upload.wikimedia.org/wikipedia/commons/thumb/6/6f/Pairing_natural.svg/1024px-Pairing_natural.svg.png),
 and checks to see if model is satisfiable
 '''
-def synthesize(tree):
-	print(registers(tree))
+def synthesize(tree, start):
 	arholes = arithholes(tree)
 	nholes = len(arholes)
+	i = 0 
 	for fill in kfills(nholes, registers(tree), 1):
 		v = {k : v for k, v in zip(arholes, fill)}
 		tprime = substitute(v, tree)
-		f = formula(tprime)
+		f = formula(tprime, start)
+		if i == 0:
+			print(f)
+			i = 1
 		s = Solver()
 		s.add(f)
 		if unsat != s.check():
 			raw_model = s.model()
 			model = {k.name() : raw_model[k] for k in raw_model.decls()}
 			return backsubstitute(registers(tprime), model, tprime)
-

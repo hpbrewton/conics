@@ -1,0 +1,25 @@
+edges: edge*
+edge: state "," symbol "," guard "," delta "," symbol "," state "\n"
+state: NAME 
+symbol: NAME 
+
+guard: boolexpr
+delta: assign*
+
+assign: register ":=" arithexpr
+
+boolexpr: boolexpr "&&" boolexpr -> "&&"
+    | boolexpr "||" boolexpr -> "||"
+    | "!" boolexpr -> "!"
+    | "(" boolexpr ")" -> "group"
+    | arithexpr ">=" arithexpr -> "gte"
+    | arithexpr ">" arithexpr -> "gt"
+    | arithexpr "==" arithexpr -> "eq"
+    | arithexpr "<" arithexpr -> "lt"
+    | arithexpr "<=" arithexpr -> "lte"
+
+arithexpr: _INT 
+
+%import common.INT -> _INT
+%import common.CNAME -> NAME
+%ignore /[ \t\n\f\r]+/

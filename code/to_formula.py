@@ -61,7 +61,7 @@ def hypo_res(tree):
 		return (And(*edgels, Or(*guards)))
 	return ret
 
-def formula(tree):
+def formula(tree, start="start"):
 	head_maker = hypo_res(tree)
 
 	states_tn, states_fn = varbs(states(tree))
@@ -75,7 +75,7 @@ def formula(tree):
 		output = example[1][1:]
 		length = len(input)
 		sts = [BitVec("s_{}".format(i), width(len(states(tree)))) for i in range(length+1)]
-		sts_starts = sts[0] == 0
+		sts_starts = sts[0] == states_tn[start]
 		regs = [bitvecs(registers(tree), "in_{}".format(i)) for i in range(length+1)]
 		reg_starts = And(*[regs[0][key] == 0 for key in regs[0]])
 	
