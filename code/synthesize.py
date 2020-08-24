@@ -51,9 +51,11 @@ and checks to see if model is satisfiable
 '''
 def synthesize(tree, start):
 	arholes = arithholes(tree)
-	nholes = len(arholes)
+	boholes = boolholes(tree)
+	narholes = len(arholes)
+	nboholes = len(boholes)
 	i = 0 
-	for fill in kfills(nholes, registers(tree), 1):
+	for fill in kfills(narholes, nboholes, registers(tree), 1):
 		v = {k : v for k, v in zip(arholes, fill)}
 		tprime = substitute(v, tree)
 		f = formula(tprime, start)
